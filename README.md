@@ -14,7 +14,7 @@ To configure the connection and device, create a config.h file in the root direc
         APP_SECRET      - the APP_SECRET from Sinric Pro
         DEVICE_IDS      - the device ID(s) from Sinric Pro
 
-This can be built under VSCode with the Raspberry Pi extension.
+This can be built under VSCode with the Raspberry Pi Pico extension.
 
 The connection to the Sinric Pro server is initiated by the following code.
 
