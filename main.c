@@ -42,6 +42,7 @@
 #include <string.h>
 #include <math.h>
 #include <malloc.h>
+#include <time.h>
 
 #include "SinricPro.h"
 #include "json.h"
@@ -289,7 +290,10 @@ int main()
         // Every 5 minute
         if((to_ms_since_boot(get_absolute_time()) - updateTimer) > 300 * 1000) {
 
-            printf("Free memory:%dkb\n", getFreeHeap()/1024 );
+            time_t now = SinricProTimestamp();
+            printf("Current time is %s",ctime(&now));            
+
+            printf("Memory:%dkb free of %dkb\n", getFreeHeap()/1024, getTotalHeap()/1024 );
             
             jsonValue_t value;
             value.integer = get_rand_32()%100 + 1;

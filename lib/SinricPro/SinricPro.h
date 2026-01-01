@@ -12,6 +12,7 @@ typedef enum SinricProCause_e { PHYSICAL_INTERACTION, PERIODIC_POLL } SinricProC
 bool SinricProInit(const char *server, uint16_t port, const char *appKey, const char *appSecret, const char*deviceIDs, const char *firmwareVersion );
 bool SinricProConnect( SinrecProDeviceActionHandler_t actionHandler );
 bool SinricProNotify( char *deviceId, char *action, SinricProCause_t cause, char *valueName, jsonValue_t value, jsonType_t valueType );
+int64_t SinricProTimestamp( void );
 
 #ifdef __cplusplus
 }

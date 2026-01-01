@@ -20,6 +20,7 @@
 
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include "pico/stdlib.h"
 
@@ -80,12 +81,6 @@ static bool defaultActionHandler( char *deviceId, char *action, jsonValue_t valu
     return true;
 }
 
-static int64_t getTimestamp( void )
-{
-    int64_t result = timestamp + ( to_ms_since_boot(get_absolute_time())/1000 - timestampSecsBoot);
-    return result;
-}
-
 static char *getSignature( char *payload )
 {
     #define SHA256_HASH_SIZE 32
@@ -135,9 +130,11 @@ static void handleWSmessage( WebSocketClient_p client,  char *msg, int len )
 
     // if timestamp store and use as base time...
     if  ( json_get( msg, "timestamp", JSON_INTEGER, &data ) ) {
+        timestampSecsBoot = to_ms_since_boot(get_absolute_time())/1000;
         timestamp = data.integer;
         printf( "timestamp: '%lld'\n", timestamp );    
-        timestampSecsBoot = to_ms_since_boot(get_absolute_time())/1000;
+        time_t now = SinricProTimestamp();
+        printf("Current time is %s",ctime(&now));            
         unknown = false;
     } 
     // if device message parse message for required data...
@@ -181,7 +178,7 @@ static void handleWSmessage( WebSocketClient_p client,  char *msg, int len )
                                 }
 
                                 char json_buffer[BUF_SIZE+1];
-                                createdAt = getTimestamp();
+                                createdAt = SinricProTimestamp();
 
                                 // build "payload" so we can create signature...
                                 json_put_start( json_buffer, BUF_SIZE );
@@ -327,7 +324,7 @@ bool SinricProNotify( char *deviceId, char *action, SinricProCause_t cause, char
 {
     bool result = false;
     char json_buffer[BUF_SIZE+1];
-    int64_t createdAt = getTimestamp();
+    int64_t createdAt = SinricProTimestamp();
     char *causeText = cause==PHYSICAL_INTERACTION?"PHYSICAL_INTERACTION":cause==PERIODIC_POLL?"PERIODIC_POLL":"UNKNOWN CAUSE";
 
     // build "payload" so we can create signature...
@@ -366,3 +363,16 @@ bool SinricProNotify( char *deviceId, char *action, SinricProCause_t cause, char
     
     return result;
 }
+
+/*! \brief Gets current time as sent by the Sinric Pro Server
+ *  \ingroup SinricPro.c
+ *
+ * \param None
+ * \return true Unix timestamp
+ */
+int64_t SinricProTimestamp( void )
+{
+    int64_t result = timestamp + ( to_ms_since_boot(get_absolute_time())/1000 - timestampSecsBoot);
+    return result;
+}
+
