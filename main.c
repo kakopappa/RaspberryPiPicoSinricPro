@@ -81,6 +81,10 @@
 #define DEVICE_IDS           "your switch id"
 #endif
 
+bool powerState = false;
+int64_t powerLevel = 0;
+
+
 uint32_t getTotalHeap(void) {
    extern char __StackLimit, __bss_end__;
    
@@ -181,13 +185,13 @@ bool deviceActionHandler( char *deviceId, char *action, jsonValue_t value, jsonT
         case JSON_TEXT:
             printf("Device[%s] %s=[%s]\n",deviceId,action,value.text);
             if ( strcmp(action,"setPowerState")==0 ) {
-                setLed( strcmp(value.text,"On")==0 );
+                powerState = strcmp(value.text,"On")==0;
             }
             break;
         case JSON_INTEGER:
             printf("Device[%s] %s=[%lld]\n",deviceId,action,value.integer);
             if ( strcmp(action,"setPowerLevel")==0 ) {
-                setLed( value.integer>0 );
+                powerLevel = value.integer;
             }
             break;
         case JSON_REAL:
@@ -246,6 +250,7 @@ int main()
                 printf("The connection failed for some other reason\n");
                 break;
         }
+        printf("Retrying connection to WiFi\n");
         softwareReset();
     } else {
         printf("Connected to WiFi SSID %s\n", ssid);
@@ -270,20 +275,30 @@ int main()
     uint32_t keyTimer = to_ms_since_boot(get_absolute_time());
     uint32_t updateTimer = to_ms_since_boot(get_absolute_time());
     while(true) {
-        // Every second
-        if((to_ms_since_boot(get_absolute_time()) - keyTimer) > 1000) {
+        if (powerState && powerLevel>0) {
+            setLed(true);
+            sleep_us(powerLevel*100);
+        } else {
+            setLed(false);
+        }
+
+        // Every 250 millisecond
+        if((to_ms_since_boot(get_absolute_time()) - keyTimer) > 250) {
             
-            bool bootSelPressed = isBootSelPresssed();;
-            // wait till released
-            while ( isBootSelPresssed() );
-            if ( bootSelPressed ) {
-                jsonValue_t value;
-                bool ledState = !getLed();
-                setLed( ledState );
-                value.text = ledState?"On":"Off";
-                // notify of state change
-                SinricProNotify( DIMMER_ID, "setPowerState", PHYSICAL_INTERACTION, "state", value, JSON_TEXT );
+            static bool bootSelPressed = false;
+
+            if ( !bootSelPressed && isBootSelPresssed() ) {
+                if ( isBootSelPresssed() ) {
+                    jsonValue_t value;
+                    powerState = !powerState;
+                    value.text = powerState?"On":"Off";
+                    // notify of state change
+                    printf("Power State changed to '%s'\n", value.text);
+                    SinricProNotify( DIMMER_ID, "setPowerState", PHYSICAL_INTERACTION, "state", value, JSON_TEXT );
+                }
             }
+
+            bootSelPressed = isBootSelPresssed();
 
             keyTimer = to_ms_since_boot(get_absolute_time());
         }
@@ -292,16 +307,21 @@ int main()
 
             time_t now = SinricProServerTime();
             printf("Server time is %s",ctime(&now));            
-
             printf("Memory:%dkb free of %dkb\n", getFreeHeap()/1024, getTotalHeap()/1024 );
             
             jsonValue_t value;
             value.integer = get_rand_32()%100 + 1;
             // send random power level...
+            printf("Power Level changed to %lld\n", value.integer);
             SinricProNotify( DIMMER_ID, "setPowerLevel", PERIODIC_POLL, "powerLevel", value, JSON_INTEGER );
-            setLed( value.integer>0 );
+            powerLevel = value.integer;
 
             updateTimer = to_ms_since_boot(get_absolute_time());
+        }
+
+        if (powerState && powerLevel<100) {
+            setLed(false);
+            sleep_us((100-powerLevel)*100);
         }
     } 
 
