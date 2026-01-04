@@ -14,6 +14,8 @@ To configure the connection and device, create a config.h file in the root direc
         APP_SECRET      - the APP_SECRET from Sinric Pro
         DEVICE_IDS      - the device ID(s) from Sinric Pro
 
+For this particular example you will need a "dimmer switch" set up and assign it's ID to DIMMER_ID.
+
 This can be built under VSCode with the Raspberry Pi Pico extension.
 
 The connection to the Sinric Pro server is initiated by the following code.
