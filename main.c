@@ -290,11 +290,12 @@ int main()
             if ( !bootSelPressed && isBootSelPresssed() ) {
                 if ( isBootSelPresssed() ) {
                     jsonValue_t value;
-                    powerState = !powerState;
-                    value.text = powerState?"On":"Off";
+                    value.text = powerState?"Off":"On";
                     // notify of state change
                     printf("Power State changed to '%s'\n", value.text);
-                    SinricProNotify( DIMMER_ID, "setPowerState", PHYSICAL_INTERACTION, "state", value, JSON_TEXT );
+                    if ( SinricProNotify( DIMMER_ID, "setPowerState", PHYSICAL_INTERACTION, "state", value, JSON_TEXT )) {
+                        powerState = !powerState;
+                    }
                 }
             }
 
@@ -313,8 +314,13 @@ int main()
             value.integer = get_rand_32()%100 + 1;
             // send random power level...
             printf("Power Level changed to %lld\n", value.integer);
-            SinricProNotify( DIMMER_ID, "setPowerLevel", PERIODIC_POLL, "powerLevel", value, JSON_INTEGER );
-            powerLevel = value.integer;
+            if ( SinricProNotify( DIMMER_ID, "setPowerLevel", PERIODIC_POLL, "powerLevel", value, JSON_INTEGER ) ) {
+                powerLevel = value.integer;
+                // Sinric Pro also set the Power State to "on" when setting the Power Level
+                if ( powerLevel> 0 ) {
+                    powerState = true;
+                }
+            }
 
             updateTimer = to_ms_since_boot(get_absolute_time());
         }
