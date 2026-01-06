@@ -275,6 +275,8 @@ int main()
     uint32_t keyTimer = to_ms_since_boot(get_absolute_time());
     uint32_t updateTimer = to_ms_since_boot(get_absolute_time());
     while(true) {
+        SinricProHandler();
+
         if (powerState && powerLevel>0) {
             setLed(true);
             sleep_us(powerLevel*100);

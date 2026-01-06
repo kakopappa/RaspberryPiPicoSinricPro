@@ -13,6 +13,7 @@ bool SinricProInit(const char *server, uint16_t port, const char *appKey, const 
 bool SinricProConnect( SinrecProDeviceActionHandler_t actionHandler );
 bool SinricProNotify( char *deviceId, char *action, SinricProCause_t cause, char *valueName, jsonValue_t value, jsonType_t valueType );
 int64_t SinricProServerTime( void );
+void SinricProHandler( void );
 
 #ifdef __cplusplus
 }

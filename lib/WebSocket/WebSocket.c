@@ -515,6 +515,23 @@ bool wsSendMessage( WebSocketClient_p client, char *text, size_t len )
     return (err == ERR_OK);
 }
 
+/*! \brief Handles any WebSocket functionality, must be called periodically
+ *  \ingroup Websocket.c
+ *
+ * \param Nothing
+ * \return Nothing
+ */
+void wsHandler( void )
+{
+
+}
+
+/*! \brief Gets local IP address
+ *  \ingroup Websocket.c
+ *
+ * \param Nothing
+ * \return pointer to local IP address 
+ */
 const char *wsGetLocalIPAddress( void ) 
 {
     static char localIPAddress[16+10];
@@ -527,6 +544,12 @@ const char *wsGetLocalIPAddress( void )
     return localIPAddress;
 }
 
+/*! \brief Gets local MAC address
+ *  \ingroup Websocket.c
+ *
+ * \param Nothing
+ * \return pointer to local MAC address 
+ */
 const char *wsGetLocalMACAddress( void )
 {
     static char localMACAddress[18+10];

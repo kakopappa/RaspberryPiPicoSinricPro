@@ -364,6 +364,17 @@ bool SinricProNotify( char *deviceId, char *action, SinricProCause_t cause, char
     return result;
 }
 
+/*! \brief Handles any WebSocket functionality, must be called periodically
+ *  \ingroup SinricPro.c
+ *
+ * \param Nothing
+ * \return Nothing
+ */
+void SinricProHandler( void )
+{
+    wsHandler();
+}
+
 /*! \brief Gets current time as sent by the Sinric Pro Server
  *  \ingroup SinricPro.c
  *

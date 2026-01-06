@@ -23,6 +23,7 @@ int wsConnectState( WebSocketClient_p client );
 bool wsSendMessage( WebSocketClient_p client, char *text, size_t len );
 const char *wsGetLocalIPAddress( void );
 const char *wsGetLocalMACAddress( void );
+void wsHandler( void );
 
 #ifdef __cplusplus
 }
