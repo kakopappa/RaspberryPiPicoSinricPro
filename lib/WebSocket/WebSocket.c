@@ -16,11 +16,29 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "pico/cyw43_arch.h"
+#include "pico/stdlib.h"
+
 #include "WebSocket.h"
 
-#include "lwip/pbuf.h"
-#include "lwip/tcp.h"
+#ifdef WIZNET_BOARD
+    #include "wizchip_conf.h"
+    #include "wizchip_spi.h"
+    #include "httpClient.h"
+
+    #define err_t       int8_t
+    #define ERR_OK      0
+    #define ERR_ABRT    -13
+
+    #define ENABLE          true
+    #define DISABLE         false
+    #define HTTP_PORT       80
+#else 
+    #include "pico/cyw43_arch.h"
+    #include "lwip/pbuf.h"
+    #include "lwip/tcp.h"
+#endif
+
+#define PING_TIMEOUT    (300*1000)
 
 /*  Web Socket Frame layout
  *
@@ -76,20 +94,33 @@ enum WebSocketOpCode {
 };
 
 typedef struct WebSocketClient_s {
-    struct tcp_pcb *tcp_pcb;
-    ip_addr_t remote_addr;
-    uint8_t en[BUF_SIZE];
-    uint8_t rx_buffer[BUF_SIZE];
-    int buffer_len;
-    int rx_buffer_len;
-    int sent_len;
-    int connected;
-    u16_t remote_port;
-    bool upgraded;
-    char *additional_headers;
-    wsMessagehandler messageHandler;
-    bool auto_reconnect;
-    
+#ifdef WIZNET_BOARD
+        uint8_t send_buf[BUF_SIZE];
+        uint8_t recv_buf[BUF_SIZE];    
+        char *remote_addr;
+        uint16_t remote_port;
+        int connected;
+        bool upgraded;
+        char *additional_headers;
+        wsMessagehandler messageHandler;
+        bool auto_reconnect;
+        uint32_t lastPing;
+#else
+        struct tcp_pcb *tcp_pcb;
+        ip_addr_t remote_addr;
+        uint8_t en[BUF_SIZE];
+        uint8_t rx_buffer[BUF_SIZE];
+        int buffer_len;
+        int rx_buffer_len;
+        int sent_len;
+        int connected;
+        u16_t remote_port;
+        bool upgraded;
+        char *additional_headers;
+        wsMessagehandler messageHandler;
+        bool auto_reconnect;
+        uint32_t lastPing;
+#endif 
 } WebSocketClient_t;
 
 static uint64_t wsBuildPacket(char* buffer, uint64_t bufferLen, enum WebSocketOpCode opcode, char* payload, uint64_t payloadLen, int mask) 
@@ -139,7 +170,7 @@ static uint64_t wsBuildPacket(char* buffer, uint64_t bufferLen, enum WebSocketOp
     }
 
     // Insert masking key
-    if(header.meta.bits.MASK && buffer!=NULL) {
+    if(header.meta.bits.MASK && buffer!=NULL && payloadLen>0) {
         buffer[payloadIndex] = header.mask.maskBytes[0];
         buffer[payloadIndex + 1] = header.mask.maskBytes[1];
         buffer[payloadIndex + 2] = header.mask.maskBytes[2];
@@ -154,9 +185,10 @@ static uint64_t wsBuildPacket(char* buffer, uint64_t bufferLen, enum WebSocketOp
     }
 
     // Copy in payload
-    if (  buffer!=NULL ) {
+    if ( buffer!=NULL ) {
         // memcpy(buffer + payloadIndex, payload, payloadLen);
         for(int i = 0; i < payloadLen; i++) {
+            // mask bytes if required
             if(header.meta.bits.MASK) {
                 buffer[payloadIndex + i] = payload[i] ^ header.mask.maskBytes[i%4];
             } else {
@@ -216,24 +248,57 @@ static bool wsParsePacket(WebsocketPacketHeader_t *header, char* buffer, uint32_
 
 }
 
+#ifndef WIZNET_BOARD
+
 static err_t wsSent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     WebSocketClient_t *state = (WebSocketClient_t*)arg;
     return ERR_OK;
 }
 
-static err_t wsConnected(void *arg, struct tcp_pcb *tpcb, err_t err) {
+#endif
+
+bool wsSendOpCode( WebSocketClient_p client, enum WebSocketOpCode opCode )
+{
+    WebSocketClient_t *state = (WebSocketClient_t *)client;
+    bool result = false;
+
+    #ifdef WIZNET_BOARD
+    int buffer_len = wsBuildPacket((char *)state->send_buf, BUF_SIZE, opCode, NULL, 0, 1);
+    result = ( httpc_send_body(state->send_buf, buffer_len) == buffer_len );
+    #else
+    state->buffer_len = wsBuildPacket((char *)state->en, BUF_SIZE, opCode, NULL, 0, 1);
+    result = ( tcp_write(state->tcp_pcb, state->en, state->buffer_len, TCP_WRITE_FLAG_COPY) == ERR_OK );
+    #endif
+
+    return result;
+}
+
+#ifdef WIZNET_BOARD
+static err_t wsConnected(void *arg, err_t err)
+#else
+static err_t wsConnected(void *arg, struct tcp_pcb *tpcb, err_t err)
+#endif
+{
     WebSocketClient_t *state = (WebSocketClient_t*)arg;
     if (err != ERR_OK) {
-        printf("Connect failed %d\n", err);
+        printf("WebSocket connect failed %d\n", err);
         return ERR_ABRT;
     }
  
-    printf("WebSocket Connected\r\n");
+    uint32_t now = to_ms_since_boot(get_absolute_time());
     state->upgraded = false;
+    state->lastPing = now;
 
     printf("Requesting WebSocket upgrade...\n");
     // Write HTTP GET Request with Websocket upgrade 
-    state->buffer_len = sprintf((char*)state->en, 
+    #ifdef WIZNET_BOARD
+    char *server_ip = state->remote_addr;
+    uint8_t *buffer = state->send_buf;
+    #else
+    char *server_ip = ip4addr_ntoa(&state->remote_addr);
+    uint8_t *buffer = state->en;
+    #endif
+    int len = sprintf( (char *)buffer, 
         "GET / HTTP/1.1\r\n"
         "Host: %s:%d\r\n"
         "Upgrade: websocket\r\n"
@@ -241,22 +306,38 @@ static err_t wsConnected(void *arg, struct tcp_pcb *tpcb, err_t err) {
         "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"
         "Sec-WebSocket-Version: 13\r\n"
         "%s\r\n",
-        ip4addr_ntoa(&state->remote_addr), state->remote_port,
+        server_ip, state->remote_port,
         state->additional_headers?state->additional_headers:"");
+
+    #ifdef WIZNET_BOARD
+    //printf("[%.*s](%d)\n",len,state->send_buf,len);
+    // Send HTTP requset as message body
+    httpc_send_body(buffer, len); 
+    #else
+    state->buffer_len = len;
     //printf("[%.*s]\n",state->buffer_len,state->en);
     err = tcp_write(state->tcp_pcb, state->en, state->buffer_len, TCP_WRITE_FLAG_COPY);
+    #endif 
 
     state->connected = TCP_CONNECTED;
     return ERR_OK;
 }
 
+#ifndef WIZNET_BOARD
+
 static err_t wsPoll(void *arg, struct tcp_pcb *tpcb) {
     return ERR_OK;
 }
 
+#endif
+
 static err_t wsClose(void *arg) {
     WebSocketClient_t *state = (WebSocketClient_t*)arg;
-    err_t err = ERR_OK;
+    err_t err = ERR_ABRT;
+
+    #ifdef WIZNET_BOARD
+    httpc_disconnect();
+    #else
     if (state->tcp_pcb != NULL) {
         tcp_arg(state->tcp_pcb, NULL);
         tcp_poll(state->tcp_pcb, NULL, 0);
@@ -265,12 +346,14 @@ static err_t wsClose(void *arg) {
         tcp_err(state->tcp_pcb, NULL);
         err = tcp_close(state->tcp_pcb);
         if (err != ERR_OK) {
-            printf("Close failed %d, calling abort\n", err);
+            printf("WebSocket close failed %d, calling abort\n", err);
             tcp_abort(state->tcp_pcb);
             err = ERR_ABRT;
         }
         state->tcp_pcb = NULL;
     }
+    #endif
+
     state->connected = TCP_DISCONNECTED;
     state->upgraded = false;
 
@@ -281,6 +364,8 @@ static err_t wsClose(void *arg) {
 
     return err;
 }
+
+#ifndef WIZNET_BOARD
 
 static void wsError(void *arg, err_t err) {
     WebSocketClient_t *state = (WebSocketClient_t*)arg;
@@ -295,11 +380,20 @@ static void wsError(void *arg, err_t err) {
     wsClose( state );
 }
 
+#endif
+
+#ifdef WIZNET_BOARD
+err_t wsReceive(void *arg, err_t err) 
+#else
 err_t wsReceive(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) 
+#endif
 {
     WebSocketClient_t *state = (WebSocketClient_t*)arg;
     bool reply_pong = false;
+    uint8_t *buffer = NULL;
+    int buffer_len = 0;
 
+#ifndef WIZNET_BOARD
     if (!p) {
         // return tcp_result(arg, -1);
     }
@@ -318,84 +412,95 @@ err_t wsReceive(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
     if (p->tot_len > 0) {
         for (struct pbuf *q = p; q != NULL; q = q->next) {
             if((state->rx_buffer_len + q->len) < BUF_SIZE) {
-                if ( state->upgraded  ) {
-                    WebsocketPacketHeader_t header;
-                    wsParsePacket(&header, (char *)q->payload, q->len);
-
-                    switch( header.meta.bits.OPCODE ) {
-                        case WEBSOCKET_OPCODE_PING:
-                            // send pong
-                            printf("Received PING\n");
-                            reply_pong = true;
-                            break;
-                        case WEBSOCKET_OPCODE_CLOSE:
-                            // close connection
-                            int64_t error = -1;
-                            if ( header.length == 2 ) {
-                                error = ((uint8_t *)q->payload + header.start)[0]<<8 | ((uint8_t *)q->payload + header.start)[1];
-                            }
-                            printf("Connection close (%lld)\n",error);
-                            break;
-                        case WEBSOCKET_OPCODE_CONTINUE:
-                        case WEBSOCKET_OPCODE_TEXT:
-                        case WEBSOCKET_OPCODE_BIN:
-                            printf("Received data (Op Code %d)\n",header.meta.bits.OPCODE);
-                            memcpy(state->rx_buffer + state->rx_buffer_len, (uint8_t *)q->payload + header.start, header.length);
-                            state->rx_buffer_len += header.length;
-                            break;
-                        default:
-                            printf("Received unknown data (Op Code %d)\n",header.meta.bits.OPCODE);
-                            break;
-                    }
-                } else {
-                    memcpy(state->rx_buffer + state->rx_buffer_len, (uint8_t *)q->payload, q->len );
-                    state->rx_buffer_len += q->len;
-                }
+                memcpy(state->rx_buffer + state->rx_buffer_len, (uint8_t *)q->payload, q->len );
+                state->rx_buffer_len += q->len;
             }
         }
-        
 
-        if ( state->upgraded && state->rx_buffer_len>0 ) {
-            //printf("tcp_recved [%.*s]\n",state->rx_buffer_len,state->rx_buffer);
-            if ( state->rx_buffer_len>=2 && state->rx_buffer[0]=='{' ) {
-                if ( state->messageHandler ) {
-                    if ( state->rx_buffer_len>=BUF_SIZE ) {
-                        state->rx_buffer_len=BUF_SIZE-1;
+        buffer_len = state->rx_buffer_len;
+        buffer = state->rx_buffer;
+#else 
+        buffer_len = httpc_recv(state->recv_buf, httpc_isReceived);
+        buffer = state->recv_buf;
+#endif        
+
+        if ( state->upgraded  ) {
+            WebsocketPacketHeader_t header;
+            wsParsePacket(&header, (char *)buffer, buffer_len);
+
+            switch( header.meta.bits.OPCODE ) {
+                case WEBSOCKET_OPCODE_PING:
+                    // send pong
+                    uint32_t now = to_ms_since_boot(get_absolute_time());
+                    printf("WebSocket received PING (@ %d s)\n", (int)(now-state->lastPing)/1000);
+                    state->lastPing = now;
+                    reply_pong = true;
+                    break;
+                case WEBSOCKET_OPCODE_CLOSE:
+                    // close connection
+                    int64_t error = -1;
+                    if ( header.length == 2 ) {
+                        error = ((uint8_t *)buffer + header.start)[0]<<8 | ((uint8_t *)buffer + header.start)[1];
                     }
-                    state->rx_buffer[state->rx_buffer_len] = 0;
-                    (state->messageHandler)( (WebSocketClient_p)state, (char *)state->rx_buffer, state->rx_buffer_len);
+                    printf("WebSocket connection close (%lld)\n",error);
+                    break;
+                case WEBSOCKET_OPCODE_TEXT:
+                    printf("WebSocket received data (Op Code %d)\n",header.meta.bits.OPCODE);
+                    buffer += header.start;
+                    buffer_len = header.length;
+                    break;
+                case WEBSOCKET_OPCODE_BIN:
+                case WEBSOCKET_OPCODE_CONTINUE:
+                default:
+                    printf("WebSocket eceived unknown or unsupported data (Op Code %d)\n",header.meta.bits.OPCODE);
+                    break;
+            }
+            if ( header.meta.bits.OPCODE==WEBSOCKET_OPCODE_TEXT && buffer_len>0 ) {
+                //printf("tcp_recved [%.*s]\n",buffer_len,buffer);
+                if ( buffer_len>=2 && buffer[0]=='{' ) {
+                    if ( state->messageHandler ) {
+                        if ( buffer_len>=BUF_SIZE ) {
+                            buffer_len=BUF_SIZE-1;
+                        }
+                        buffer[buffer_len] = 0;
+                        (state->messageHandler)( (WebSocketClient_p)state, (char *)buffer, buffer_len);
+                    }
                 }
             }
         } else {
-            if ( strnstr((char *)state->rx_buffer, "HTTP/1.1 101", state->rx_buffer_len) != NULL &&
-                    strnstr((char *)state->rx_buffer, "Connection: upgrade", state->rx_buffer_len) != NULL &&
-                        strnstr((char *)state->rx_buffer, "Upgrade: websocket", state->rx_buffer_len) != NULL ) {
-                //printf("tcp_recved [%.*s]\n",state->rx_buffer_len,state->rx_buffer);
+            if ( strnstr((char *)buffer, "HTTP/1.1 101", buffer_len) != NULL &&
+                    strnstr((char *)buffer, "Connection: upgrade", buffer_len) != NULL &&
+                        strnstr((char *)buffer, "Upgrade: websocket", buffer_len) != NULL ) {
+                //printf("tcp_recved [%.*s]\n",buffer_len,buffer);
                 printf("WebSocket upgrade acknowladged\n");
                 state->upgraded = true;
             }            
         }
 
+#ifndef WIZNET_BOARD        
         tcp_recved(tpcb, p->tot_len);
     }
     pbuf_free(p);
+#endif
 
     if ( reply_pong ) {
         // send pong
-        state->buffer_len = wsBuildPacket((char *)state->en, BUF_SIZE, WEBSOCKET_OPCODE_PONG, NULL, 0, 1);
-        if ( tcp_write(state->tcp_pcb, state->en, state->buffer_len, TCP_WRITE_FLAG_COPY) == ERR_OK) {
-            printf("Sent PONG\n");
+        if ( wsSendOpCode( arg, WEBSOCKET_OPCODE_PONG ) ) {
+            printf("WebSocket sent PONG (%d)\n", buffer_len);
         } else {    
-            printf("PONG send failed!\n");
+            printf("WebSocket PONG send failed!\n");
         }
     }
 
     return ERR_OK;
 }
 
+#ifndef WIZNET_BOARD
+
 static err_t wsTCPConnect(void *arg) 
 {
     WebSocketClient_t *state = (WebSocketClient_t*)arg;
+    err_t err = ERR_ABRT;
 
     if(state->connected != TCP_DISCONNECTED) return ERR_OK;
 
@@ -416,13 +521,15 @@ static err_t wsTCPConnect(void *arg)
     // these calls are a no-op and can be omitted, but it is a good practice to use them in
     // case you switch the cyw43_arch type later.
     cyw43_arch_lwip_begin();
+    err = tcp_connect(state->tcp_pcb, &state->remote_addr, state->remote_port, wsConnected);
+    cyw43_arch_lwip_end();
     state->connected = TCP_CONNECTING;
     state->upgraded = false;
-    err_t err = tcp_connect(state->tcp_pcb, &state->remote_addr, state->remote_port, wsConnected);
-    cyw43_arch_lwip_end();
-        
+
     return err;
 }
+
+#endif
 
 //===============================================================================================================
 
@@ -444,7 +551,11 @@ WebSocketClient_p wsCreate( const char *server, uint16_t port, wsMessagehandler 
         return NULL;
     }
 
-    ip4addr_aton(server, &state->remote_addr);
+    #ifdef WIZNET_BOARD
+        state->remote_addr = strdup( server );
+    #else 
+        ip4addr_aton(server, &state->remote_addr);
+    #endif
     state->remote_port = port;
     state->messageHandler = messageHandler;
     if ( additionalHeaders ) {
@@ -463,9 +574,27 @@ WebSocketClient_p wsCreate( const char *server, uint16_t port, wsMessagehandler 
  */
 bool wsConnect( WebSocketClient_p client )
 {
+    bool result = false;
     WebSocketClient_t *state = (WebSocketClient_t *)client;
-    printf("WebSocket connecting to %s:%u\n", ip4addr_ntoa(&state->remote_addr), state->remote_port);
-    return( wsTCPConnect(state)==ERR_OK );
+    #ifdef WIZNET_BOARD
+        uint8_t server_ip[4];
+        //printf("WebSocket parsing server ip address [%s]\n",state->remote_addr);
+        if ( sscanf(state->remote_addr, "%hhu.%hhu.%hhu.%hhu", &server_ip[0], &server_ip[1], &server_ip[2], &server_ip[3]) == 4 ) {
+            //printf("WebSocket parsed server ip address [%d][%d][%d][%d]\n", server_ip[0], server_ip[1], server_ip[2], server_ip[3]);
+            if ( httpc_init(0, server_ip, state->remote_port, state->send_buf, state->recv_buf) == HTTPC_TRUE) {
+                printf("WebSocket connecting to %s:%u\n", state->remote_addr, state->remote_port);
+                result = true;
+            } else {
+                printf("WebSocket HTTP Client initialise failed\n");
+            }
+        } else {
+            printf("WebSocket invalid server ip address [%s]",state->remote_addr);
+        }
+    #else
+        printf("WebSocket connecting to %s:%u\n", ip4addr_ntoa(&state->remote_addr), state->remote_port);
+        result = ( wsTCPConnect(state)==ERR_OK );
+    #endif
+    return result;
 }
 
 /*! \brief Destroys a client freeing resourcxes
@@ -479,12 +608,19 @@ bool wsDestroy( WebSocketClient_p client )
     WebSocketClient_t *state = (WebSocketClient_t *)client;
     state->auto_reconnect = false;
     wsClose( state );
+    #ifdef WIZNET_BOARD
+    if ( state->remote_addr ) {
+        free(state->remote_addr);
+    }
+    #endif
     if ( state->additional_headers ) {
         free(state->additional_headers);
     }
     if ( client ) {
         free( client );
     }
+
+    return true;
 }
 
 /*! \brief Returns the current connection state
@@ -510,9 +646,18 @@ int wsConnectState( WebSocketClient_p client )
 bool wsSendMessage( WebSocketClient_p client, char *text, size_t len )
 {
     WebSocketClient_t *state = (WebSocketClient_t *)client;
+    bool result = false;
+
+    #ifdef WIZNET_BOARD
+    //printf("send message [%.*s](%d)\n",len,text,len);
+    int buffer_len = wsBuildPacket((char *)state->send_buf, BUF_SIZE, WEBSOCKET_OPCODE_TEXT, text, len, 1);
+    result = ( httpc_send_body(state->send_buf, buffer_len) == buffer_len );
+    #else
     state->buffer_len = wsBuildPacket((char *)state->en, BUF_SIZE, WEBSOCKET_OPCODE_TEXT, text, len, 1);
-    err_t err = tcp_write(state->tcp_pcb, state->en, state->buffer_len, TCP_WRITE_FLAG_COPY);
-    return (err == ERR_OK);
+    result = ( tcp_write(state->tcp_pcb, state->en, state->buffer_len, TCP_WRITE_FLAG_COPY) == ERR_OK );
+    #endif
+
+    return result;
 }
 
 /*! \brief Handles any WebSocket functionality, must be called periodically
@@ -521,43 +666,41 @@ bool wsSendMessage( WebSocketClient_p client, char *text, size_t len )
  * \param Nothing
  * \return Nothing
  */
-void wsHandler( void )
+void wsHandler( WebSocketClient_p client )
 {
+    WebSocketClient_t *state = (WebSocketClient_t *)client;
 
-}
+    #ifdef WIZNET_BOARD
+    httpc_connection_handler();
 
-/*! \brief Gets local IP address
- *  \ingroup Websocket.c
- *
- * \param Nothing
- * \return pointer to local IP address 
- */
-const char *wsGetLocalIPAddress( void ) 
-{
-    static char localIPAddress[16+10];
-    ip_addr_t ip_address;
-
-    // get ip address
-    memcpy(&ip_address, &cyw43_state.netif[CYW43_ITF_STA].ip_addr, sizeof (ip_addr_t));
-    strncpy( localIPAddress, ip4addr_ntoa(&ip_address), 16 );
-
-    return localIPAddress;
-}
-
-/*! \brief Gets local MAC address
- *  \ingroup Websocket.c
- *
- * \param Nothing
- * \return pointer to local MAC address 
- */
-const char *wsGetLocalMACAddress( void )
-{
-    static char localMACAddress[18+10];
-
-        // get the mac address
-    for ( int i=0 ; i < 6 ; i++ ) {
-        sprintf(&localMACAddress[i*3], i<5?"%02X-":"%02X",cyw43_state.mac[i]);
+    if( state->connected == TCP_CONNECTED && httpc_isConnected ) {
+        // Recv: HTTP response
+        if(httpc_isReceived > 0) {
+            wsReceive(client, ERR_OK);
+        } else {
+            uint32_t now = to_ms_since_boot(get_absolute_time());
+            if ( (now-state->lastPing) > PING_TIMEOUT ) {
+                printf("WebSocket PING timeout (%d s), closing socket\n", (int)(now-state->lastPing)/1000);
+                wsClose( client );
+            }
+        }
+    } else if ( state->connected == TCP_DISCONNECTED && httpc_isSockOpen ) {
+        //printf("HTTP Client connect...\n");
+        if ( httpc_connect()==HTTPC_TRUE ) {
+            //printf("HTTP Client connecting...\n");
+            state->connected = TCP_CONNECTING;
+            state->upgraded = false;
+        } else {
+            printf("WebSocket HTTP Client failed to connect\n");
+        }
+    } else if ( state->connected == TCP_CONNECTING && httpc_isConnected ) {
+        //printf("HTTP Client connected\n");
+        wsConnected( client, ERR_OK );
+    } else  if( state->connected == TCP_CONNECTED && !httpc_isConnected ) {
+        printf("WebSocket not connected, closing socket\n");
+        wsClose( client );
     }
 
-    return localMACAddress;
+    #endif
 }
+

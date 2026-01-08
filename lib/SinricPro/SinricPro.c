@@ -76,6 +76,9 @@ static bool defaultActionHandler( char *deviceId, char *action, jsonValue_t valu
         case JSON_BOOLEAN:
             printf("Device[%s] %s=[%s]\n",deviceId,action,value.boolean?"true":"false");
             break;
+        default:
+            printf("Device[%s] %s=[dataType %d not handled]\n",deviceId,action,dataType);
+            break;
     }
 
     return true;
@@ -88,7 +91,7 @@ static char *getSignature( char *payload )
     uint8_t out[SHA256_HASH_SIZE];
 
     hmac_sha256( SinricProAppSecret, strlen(SinricProAppSecret), payload, strlen(payload), &out, sizeof(out) );
-    base64_encode( out, SHA256_HASH_SIZE, signature );
+    base64_encode( (char *)out, SHA256_HASH_SIZE, signature );
 
     //printf("signature=[%s](%d)\n",signature,strlen(signature));
 
@@ -113,6 +116,8 @@ static bool buildJsonPayload( char *action, char *clientId, int64_t createdAt, c
     json_put( "value", (jsonValue_t)NULL, JSON_OBJ );
     json_put( valueName, (jsonValue_t)value, valueType );
     json_put( NULL, (jsonValue_t)NULL, JSON_OBJ );
+
+    return true;
 }
 
 static void handleWSmessage( WebSocketClient_p client,  char *msg, int len )
@@ -250,6 +255,8 @@ static bool buildNotifyPayload( char *action, char *causeText, int64_t createdAt
     json_put( "value", (jsonValue_t)NULL, JSON_OBJ );
     json_put( valueName, (jsonValue_t)value, valueType );
     json_put( NULL, (jsonValue_t)NULL, JSON_OBJ );
+
+    return true;
 }
 
 //===============================================================================================================
@@ -263,15 +270,17 @@ static bool buildNotifyPayload( char *action, char *causeText, int64_t createdAt
  * \param appSecret APP_SECRET as assigned by Sinric Pro
  * \param deviceIDs deviceIDs as assigned by Sinric Pro
  * \param firmwareVersion version number of this App
+ * \param localIPAddress local IP address
+ * \param localMACAddress local MAC address
  * \return true if succesful
  */
-bool SinricProInit(const char *server, uint16_t port, const char *appKey, const char *appSecret, const char*deviceIDs, const char *firmwareVersion )
+bool SinricProInit(const char *server, uint16_t port, const char *appKey, const char *appSecret, const char*deviceIDs, const char *firmwareVersion, const char *localIPAddress, const char *localMACAddress )
 {
     // save apo secret
     SinricProAppSecret = appSecret;
 
-    const char *ip_address = wsGetLocalIPAddress();
-    const char *mac_address = wsGetLocalMACAddress();
+    const char *ip_address = strdup(localIPAddress);
+    const char *mac_address = strdup(localMACAddress);
 
     printf("ip address=[%s]\n", ip_address);
     printf("mac address=[%s]\n",mac_address);
@@ -372,7 +381,7 @@ bool SinricProNotify( char *deviceId, char *action, SinricProCause_t cause, char
  */
 void SinricProHandler( void )
 {
-    wsHandler();
+    wsHandler( wsClient );
 }
 
 /*! \brief Gets current time as sent by the Sinric Pro Server

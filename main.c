@@ -82,7 +82,7 @@
 #endif
 
 bool powerState = false;
-int64_t powerLevel = 0;
+int64_t powerLevel = 100;
 
 
 uint32_t getTotalHeap(void) {
@@ -205,6 +205,30 @@ bool deviceActionHandler( char *deviceId, char *action, jsonValue_t value, jsonT
     return true;
 }
 
+const char *getLocalIPAddress( void ) 
+{
+    static char localIPAddress[16+10];
+    ip_addr_t ip_address;
+
+    // get ip address
+    memcpy(&ip_address, &cyw43_state.netif[CYW43_ITF_STA].ip_addr, sizeof (ip_addr_t));
+    strncpy( localIPAddress, ip4addr_ntoa(&ip_address), 16 );
+
+    return localIPAddress;
+}
+
+const char *getLocalMACAddress( void )
+{
+    static char localMACAddress[18+10];
+
+        // get the mac address
+    for ( int i=0 ; i < 6 ; i++ ) {
+        sprintf(&localMACAddress[i*3], i<5?"%02X-":"%02X",cyw43_state.mac[i]);
+    }
+
+    return localMACAddress;
+}
+
 int main() 
 {
     int rc = 0;
@@ -266,7 +290,7 @@ int main()
     }
 
     // Initialise Sinric Pro connection parameters
-    SinricProInit( server_ip, TCP_PORT, APP_KEY, APP_SECRET, DEVICE_IDS, FIRMWARE_VERSION );
+    SinricProInit( server_ip, TCP_PORT, APP_KEY, APP_SECRET, DEVICE_IDS, FIRMWARE_VERSION, getLocalIPAddress(), getLocalMACAddress() );
     // Connect to Sinric Pro server and assign message handler
     if ( SinricProConnect( deviceActionHandler ) ) {
         printf("Sinric Pro Connected\n");

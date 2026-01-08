@@ -21,9 +21,7 @@ bool wsConnect( WebSocketClient_p client );
 bool wsDestroy( WebSocketClient_p client );
 int wsConnectState( WebSocketClient_p client );
 bool wsSendMessage( WebSocketClient_p client, char *text, size_t len );
-const char *wsGetLocalIPAddress( void );
-const char *wsGetLocalMACAddress( void );
-void wsHandler( void );
+void wsHandler( WebSocketClient_p client );
 
 #ifdef __cplusplus
 }
