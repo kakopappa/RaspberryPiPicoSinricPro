@@ -4,6 +4,8 @@ Sinric Pro "Dimmer Switch" Device Example in C for the Raspberry Pi Pico W.
 
 This gives an example of how the Raspberry Pi Pico W can act as a device for SinRic Pro (see https://sinric.pro/), and hence be controlled by Google Home or Alexa commands. This can be built under VSCode with the Raspberry Pi Pico extension.
 
+This also now supports WIZnet Pico boards with the WIZnet libraries, add "add_definitions(-DWIZNET_BOARD)" to enable.
+
 This simple example receives On/Off and Power Level messages from Sinric Pro, and also periodically sends random Power Level notifications. State change notifications can also be triggered by pressing the BOOTSEL button. It is also capable of supporting other device types, e.g. "Switch", "Garage Door", etc.
 
 To configure the connection and device, create a config.h file in the root directory and add the following defines:-
