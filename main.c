@@ -81,6 +81,8 @@
 #define DEVICE_IDS           "your switch id"
 #endif
 
+#define DIMMER_ID           "your switch id"
+
 bool powerState = false;
 int64_t powerLevel = 100;
 
@@ -290,7 +292,7 @@ int main()
     }
 
     // Initialise Sinric Pro connection parameters
-    SinricProInit( server_ip, TCP_PORT, APP_KEY, APP_SECRET, DEVICE_IDS, FIRMWARE_VERSION, getLocalIPAddress(), getLocalMACAddress() );
+    SinricProInit( server_ip, SERVER_URL, TCP_PORT, APP_KEY, APP_SECRET, DEVICE_IDS, FIRMWARE_VERSION, getLocalIPAddress(), getLocalMACAddress() );
     // Connect to Sinric Pro server and assign message handler
     if ( SinricProConnect( deviceActionHandler ) ) {
         printf("Sinric Pro Connected\n");

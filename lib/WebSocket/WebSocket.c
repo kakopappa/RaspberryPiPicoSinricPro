@@ -96,8 +96,9 @@ enum WebSocketOpCode {
 typedef struct WebSocketClient_s {
 #ifdef WIZNET_BOARD
         uint8_t send_buf[BUF_SIZE];
-        uint8_t recv_buf[BUF_SIZE];    
+        uint8_t recv_buf[BUF_SIZE];
         char *remote_addr;
+        char *hostname;
         uint16_t remote_port;
         int connected;
         bool upgraded;
@@ -108,6 +109,7 @@ typedef struct WebSocketClient_s {
 #else
         struct tcp_pcb *tcp_pcb;
         ip_addr_t remote_addr;
+        char *hostname;
         uint8_t en[BUF_SIZE];
         uint8_t rx_buffer[BUF_SIZE];
         int buffer_len;
@@ -120,7 +122,7 @@ typedef struct WebSocketClient_s {
         wsMessagehandler messageHandler;
         bool auto_reconnect;
         uint32_t lastPing;
-#endif 
+#endif
 } WebSocketClient_t;
 
 static uint64_t wsBuildPacket(char* buffer, uint64_t bufferLen, enum WebSocketOpCode opcode, char* payload, uint64_t payloadLen, int mask) 
@@ -170,7 +172,7 @@ static uint64_t wsBuildPacket(char* buffer, uint64_t bufferLen, enum WebSocketOp
     }
 
     // Insert masking key
-    if(header.meta.bits.MASK && buffer!=NULL && payloadLen>0) {
+    if(header.meta.bits.MASK && buffer!=NULL) {
         buffer[payloadIndex] = header.mask.maskBytes[0];
         buffer[payloadIndex + 1] = header.mask.maskBytes[1];
         buffer[payloadIndex + 2] = header.mask.maskBytes[2];
@@ -290,15 +292,20 @@ static err_t wsConnected(void *arg, struct tcp_pcb *tpcb, err_t err)
     state->lastPing = now;
 
     printf("Requesting WebSocket upgrade...\n");
-    // Write HTTP GET Request with Websocket upgrade 
+    // Write HTTP GET Request with Websocket upgrade
     #ifdef WIZNET_BOARD
-    char *server_ip = state->remote_addr;
     uint8_t *buffer = state->send_buf;
     #else
-    char *server_ip = ip4addr_ntoa(&state->remote_addr);
     uint8_t *buffer = state->en;
     #endif
-    int len = sprintf( (char *)buffer, 
+    // Use hostname for Host header if available, otherwise use IP
+    const char *host_header = state->hostname ? state->hostname :
+    #ifdef WIZNET_BOARD
+        state->remote_addr;
+    #else
+        ip4addr_ntoa(&state->remote_addr);
+    #endif
+    int len = sprintf( (char *)buffer,
         "GET / HTTP/1.1\r\n"
         "Host: %s:%d\r\n"
         "Upgrade: websocket\r\n"
@@ -306,7 +313,7 @@ static err_t wsConnected(void *arg, struct tcp_pcb *tpcb, err_t err)
         "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"
         "Sec-WebSocket-Version: 13\r\n"
         "%s\r\n",
-        server_ip, state->remote_port,
+        host_header, state->remote_port,
         state->additional_headers?state->additional_headers:"");
 
     #ifdef WIZNET_BOARD
@@ -537,13 +544,14 @@ static err_t wsTCPConnect(void *arg)
  *  \ingroup Websocket.c
  *
  * \param server ip address of target server
+ * \param hostname hostname of target server (for Host header), can be NULL
  * \param port port on which to connect
  * \param messageHandler callback to handle received messages
  * \param additioonalHeaders additional headers to include in the connect
  * \param autoReconnect automatically reconnect if the connection is closed
  * \return handle to a WebSocket client
  */
-WebSocketClient_p wsCreate( const char *server, uint16_t port, wsMessagehandler messageHandler, char *additionalHeaders, bool autoReconnect )
+WebSocketClient_p wsCreate( const char *server, const char *hostname, uint16_t port, wsMessagehandler messageHandler, char *additionalHeaders, bool autoReconnect )
 {
     WebSocketClient_t *state = (WebSocketClient_t *)calloc(1, sizeof(WebSocketClient_t));
     if (!state) {
@@ -553,9 +561,10 @@ WebSocketClient_p wsCreate( const char *server, uint16_t port, wsMessagehandler 
 
     #ifdef WIZNET_BOARD
         state->remote_addr = strdup( server );
-    #else 
+    #else
         ip4addr_aton(server, &state->remote_addr);
     #endif
+    state->hostname = hostname ? strdup(hostname) : NULL;
     state->remote_port = port;
     state->messageHandler = messageHandler;
     if ( additionalHeaders ) {
@@ -613,6 +622,9 @@ bool wsDestroy( WebSocketClient_p client )
         free(state->remote_addr);
     }
     #endif
+    if ( state->hostname ) {
+        free(state->hostname);
+    }
     if ( state->additional_headers ) {
         free(state->additional_headers);
     }

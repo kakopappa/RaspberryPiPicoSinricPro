@@ -265,6 +265,7 @@ static bool buildNotifyPayload( char *action, char *causeText, int64_t createdAt
  *  \ingroup SinricPro.c
  *
  * \param server_ip ip address of Sinric Pro server
+ * \param hostname hostname of Sinric Pro server
  * \param port TCP/IP port to conneced to Sinric Pro server on
  * \param appKey APP_KEY as assigned by Sinric Pro
  * \param appSecret APP_SECRET as assigned by Sinric Pro
@@ -274,7 +275,7 @@ static bool buildNotifyPayload( char *action, char *causeText, int64_t createdAt
  * \param localMACAddress local MAC address
  * \return true if succesful
  */
-bool SinricProInit(const char *server, uint16_t port, const char *appKey, const char *appSecret, const char*deviceIDs, const char *firmwareVersion, const char *localIPAddress, const char *localMACAddress )
+bool SinricProInit(const char *server, const char *hostname, uint16_t port, const char *appKey, const char *appSecret, const char*deviceIDs, const char *firmwareVersion, const char *localIPAddress, const char *localMACAddress )
 {
     // save apo secret
     SinricProAppSecret = appSecret;
@@ -287,7 +288,7 @@ bool SinricProInit(const char *server, uint16_t port, const char *appKey, const 
 
     // create additional web socket headers for Sinric Pro...
     char additional_headers[300];
-    sprintf(additional_headers, 
+    sprintf(additional_headers,
         "appkey: %s\r\n"
         "deviceids: %s\r\n"
         "restoredevicestates: true\r\n"
@@ -301,7 +302,7 @@ bool SinricProInit(const char *server, uint16_t port, const char *appKey, const 
         firmwareVersion );
 
     // create WebSocket client and connect...
-    wsClient = wsCreate( server, port, handleWSmessage, additional_headers, true );
+    wsClient = wsCreate( server, hostname, port, handleWSmessage, additional_headers, true );
 
     return( wsClient != NULL );
 }
